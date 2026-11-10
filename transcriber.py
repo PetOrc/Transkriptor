@@ -45,10 +45,21 @@ def _transcribe_process(args, output_queue):
     """Дочерний процесс: тяжёлый вызов Whisper можно остановить terminate()."""
     media_path, language, model_name, device, model_path = args
     try:
-        import whisper
         resolved_model = _resolve_model(model_name, model_path)
+        use_cuda = "cuda" in device.lower()
         output_queue.put(("progress", 8, "Загрузка локальной модели Whisper..."))
-        model = whisper.load_model(resolved_model, device="cuda" if "cuda" in device.lower() else "cpu")
+        faster_model = None
+        model = None
+        if os.path.isdir(resolved_model) and os.path.isfile(os.path.join(resolved_model, "config.json")):
+            # Локальный формат CTranslate2 (faster-whisper).
+            from faster_whisper import WhisperModel
+            faster_model = WhisperModel(
+                resolved_model, device="cuda" if use_cuda else "cpu",
+                compute_type="float16" if use_cuda else "int8"
+            )
+        else:
+            import whisper
+            model = whisper.load_model(resolved_model, device="cuda" if use_cuda else "cpu")
         output_queue.put(("progress", 20, "Подготовка аудио..."))
         source = media_path
         temp_audio = None
@@ -69,17 +80,27 @@ def _transcribe_process(args, output_queue):
                     f"и доступность видеодорожки: {exc}"
                 ) from exc
         output_queue.put(("progress", 25, "Распознавание речи..."))
-        result = model.transcribe(
-            source,
-            language=None if language == "auto" else language,
-            verbose=False,
-            fp16=("cuda" in device.lower())
-        )
-        segments = [
-            {"start": float(s.get("start", 0)), "end": float(s.get("end", 0)),
-             "text": str(s.get("text", "")).strip()}
-            for s in result.get("segments", [])
-        ]
+        if faster_model is not None:
+            generated, info = faster_model.transcribe(
+                source, language=None if language == "auto" else language,
+                vad_filter=False
+            )
+            segments = [
+                {"start": float(seg.start), "end": float(seg.end), "text": str(seg.text).strip()}
+                for seg in generated
+            ]
+        else:
+            result = model.transcribe(
+                source,
+                language=None if language == "auto" else language,
+                verbose=False,
+                fp16=use_cuda
+            )
+            segments = [
+                {"start": float(seg.get("start", 0)), "end": float(seg.get("end", 0)),
+                 "text": str(seg.get("text", "")).strip()}
+                for seg in result.get("segments", [])
+            ]
         output_queue.put(("result", segments))
         if temp_audio and os.path.exists(temp_audio):
             os.remove(temp_audio)
