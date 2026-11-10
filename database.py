@@ -154,20 +154,23 @@ class DatabaseManager:
                     )
                 )
 
-                # Определение версии транскрипции
+                # Не создаём новую версию, если содержимое проекта не изменилось.
                 cursor.execute(
-                    "SELECT MAX(version) as max_ver FROM transcriptions WHERE project_id = ?",
+                    """SELECT id, version, full_text, status FROM transcriptions
+                       WHERE project_id = ? ORDER BY version DESC LIMIT 1""",
                     (project_id,)
                 )
-                row = cursor.fetchone()
-                next_version = (row["max_ver"] or 0) + 1
-
-                cursor.execute(
-                    """INSERT INTO transcriptions (project_id, version, full_text, status)
-                       VALUES (?, ?, ?, ?)""",
-                    (project_id, next_version, transcription_text, status)
-                )
-                transcription_id = cursor.lastrowid
+                latest = cursor.fetchone()
+                if latest and latest["full_text"] == transcription_text and latest["status"] == status:
+                    transcription_id = latest["id"]
+                else:
+                    next_version = (latest["version"] if latest else 0) + 1
+                    cursor.execute(
+                        """INSERT INTO transcriptions (project_id, version, full_text, status)
+                           VALUES (?, ?, ?, ?)""",
+                        (project_id, next_version, transcription_text, status)
+                    )
+                    transcription_id = cursor.lastrowid
 
                 conn.commit()
                 logging.info(f"Проект '{name}' (ID={project_id}) успешно сохранён.")
