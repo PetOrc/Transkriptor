@@ -31,7 +31,9 @@ class PostProcessor:
 
     # Союзы, перед которыми в русском языке ставится запятая
     COMMA_CONJUNCTIONS_RU = {"а", "но", "что", "чтобы", "потому", "поэтому", "однако", "когда", "если", "который"}
+    COMMA_CONJUNCTIONS_EN = {"but", "because", "although", "however", "when", "if", "which", "who", "while"}
     QUESTION_WORDS_RU = {"кто", "что", "где", "когда", "почему", "зачем", "как", "сколько", "какой", "чей"}
+    QUESTION_WORDS_EN = {"who", "what", "where", "when", "why", "how", "which"}
 
     def __init__(self):
         self.filler_regex = re.compile(
@@ -65,6 +67,8 @@ class PostProcessor:
         lines = text.splitlines()
         processed_lines: List[str] = []
         norm_lang = "en" if lang == "en" else "ru"
+        conjunctions = self.COMMA_CONJUNCTIONS_EN if norm_lang == "en" else self.COMMA_CONJUNCTIONS_RU
+        question_words = self.QUESTION_WORDS_EN if norm_lang == "en" else self.QUESTION_WORDS_RU
 
         for line in lines:
             if not line.strip():
@@ -90,7 +94,7 @@ class PostProcessor:
                     except Exception:
                         lemma = clean_w
 
-                if i > 0 and (clean_w in self.COMMA_CONJUNCTIONS_RU or lemma in self.COMMA_CONJUNCTIONS_RU):
+                if i > 0 and (clean_w in conjunctions or lemma in conjunctions):
                     if not new_words[-1].endswith((",", ".", "!", "?", ":", ";")):
                         new_words[-1] = new_words[-1] + ","
 
@@ -105,7 +109,7 @@ class PostProcessor:
             # Точка или вопросительный знак в конце строки
             first_word_clean = re.sub(r"[^\w]", "", words[0]).lower() if words else ""
             if sentence and not sentence.endswith((".", "!", "?", "…")):
-                if first_word_clean in self.QUESTION_WORDS_RU:
+                if first_word_clean in question_words:
                     sentence += "?"
                 else:
                     sentence += "."
