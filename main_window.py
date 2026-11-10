@@ -784,7 +784,7 @@ class MainWindow(QMainWindow):
 
             if dlg.exec() == QDialog.Accepted:
                 opts = dlg.get_export_options()
-                self.exporter.export(text, opts["path"], opts["format"])
+                self.exporter.export(text, opts["path"], opts["format"], self.current_media_duration)
 
                 if self.current_project_id is not None:
                     self.db.log_export(self.current_project_id, opts["path"], opts["format"])
