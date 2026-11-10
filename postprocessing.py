@@ -115,29 +115,6 @@ class PostProcessor:
         logging.info("Умная пунктуация применена.")
         return "\n".join(processed_lines)
 
-    def format_paragraphs_by_speaker(self, text: str) -> str:
-        """Группирует и разбивает текст на абзацы при смене спикера."""
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        if not lines:
-            return ""
-
-        speaker_pattern = re.compile(r"^(?:\[\d{6}\]\s*)?\[([^\]]+)\]")
-        formatted_lines: List[str] = []
-        last_speaker = None
-
-        for line in lines:
-            match = speaker_pattern.match(line)
-            current_speaker = match.group(1) if match else None
-
-            if last_speaker is not None and current_speaker is not None and current_speaker != last_speaker:
-                formatted_lines.append("")  # Пустая строка между разными спикерами
-
-            formatted_lines.append(line)
-            if current_speaker:
-                last_speaker = current_speaker
-
-        return "\n".join(formatted_lines)
-
     @staticmethod
     def _split_prefix_and_body(line: str):
         """Отделяет префикс тайм-кода и спикера ([000123] [Спикер 1]) от основного текста."""
