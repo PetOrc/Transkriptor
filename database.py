@@ -54,9 +54,18 @@ class DatabaseManager:
                         language TEXT DEFAULT 'ru',
                         model TEXT DEFAULT 'base',
                         punctuation INTEGER DEFAULT 1,
+                        device TEXT DEFAULT 'CPU',
+                        filler_filter INTEGER DEFAULT 1,
                         FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
                     )
                 """)
+
+                # Миграция старых баз данных: добавляем новые параметры, не удаляя старые столбцы.
+                settings_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(settings)").fetchall()}
+                if "device" not in settings_columns:
+                    cursor.execute("ALTER TABLE settings ADD COLUMN device TEXT DEFAULT 'CPU'")
+                if "filler_filter" not in settings_columns:
+                    cursor.execute("ALTER TABLE settings ADD COLUMN filler_filter INTEGER DEFAULT 1")
 
                 # 4. Таблица транскрипций
                 cursor.execute("""
@@ -132,13 +141,16 @@ class DatabaseManager:
                 # Сохранение настроек
                 cursor.execute("DELETE FROM settings WHERE project_id = ?", (project_id,))
                 cursor.execute(
-                    """INSERT INTO settings (project_id, language, model, punctuation)
-                       VALUES (?, ?, ?, ?)""",
+                    """INSERT INTO settings
+                       (project_id, language, model, punctuation, device, filler_filter)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
                     (
                         project_id,
                         settings_info.get("language", "ru"),
                         settings_info.get("model", "base"),
-                        int(bool(settings_info.get("punctuation", True)))
+                        int(bool(settings_info.get("punctuation", True))),
+                        settings_info.get("device", "CPU"),
+                        int(bool(settings_info.get("filler_filter", True)))
                     )
                 )
 
