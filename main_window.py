@@ -665,6 +665,9 @@ class MainWindow(QMainWindow):
             self.btn_cancel_transcribe.setEnabled(True)
             self.lbl_status.setText("Статус: Запуск транскрипции...")
 
+            self.app_settings["model_path"] = self.edit_model_path.text().strip()
+            QSettings("PetOrc", "Transkriptor").setValue("model_path", self.app_settings["model_path"])
+
             self.worker = TranscriptionWorker(
                 transcriber=self.transcriber,
                 media_path=self.current_media_path,
@@ -704,7 +707,7 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "Ошибка транскрипции", f"Произошла ошибка:\n{error_msg}")
 
     def _on_transcription_finished(self, segments: List[Dict[str, Any]]) -> None:
-        """Формирует итоговый текст из сегментов, применяет диаризацию и постобработку."""
+        """Формирует итоговый текст из сегментов и применяет постобработку."""
         try:
             self.btn_start_transcribe.setEnabled(True)
             self.btn_cancel_transcribe.setEnabled(False)
@@ -730,7 +733,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Ошибка", f"Не удалось обработать текст:\n{e}")
 
     def run_manual_postprocessing(self) -> None:
-        """Запускает умную пунктуацию, фильтр слов-паразитов и разбивку на абзацы по кнопке."""
+        """Запускает умную пунктуацию и фильтр слов-паразитов по кнопке."""
         try:
             text = self.text_editor.toPlainText()
             if not text.strip():
@@ -742,7 +745,6 @@ class MainWindow(QMainWindow):
             text = self.postprocessor.apply_smart_punctuation(text, self.combo_lang.currentText())
 
             self.text_editor.setPlainText(text)
-            self._highlight_speakers_in_editor()
             self.lbl_status.setText("Статус: Постобработка текста выполнена.")
         except Exception as e:
             logging.error(f"Ошибка постобработки: {e}", exc_info=True)
@@ -865,9 +867,6 @@ class MainWindow(QMainWindow):
                     self.combo_lang.setCurrentText(st.get("language", "ru"))
                     self.combo_model.setCurrentText(st.get("model", "base"))
                     self.chk_punctuation.setChecked(bool(st.get("punctuation", 1)))
-
-                if data["speakers"]:
-                    self.speakers = data["speakers"]
 
                 if data["transcription"]:
                     self.text_editor.setPlainText(data["transcription"].get("full_text", ""))
