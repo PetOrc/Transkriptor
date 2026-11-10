@@ -1,239 +1,170 @@
 # transcriber.py
+"""Распознавание речи в отдельном процессе с возможностью немедленной отмены."""
 import os
-import time
-import tempfile
+import glob
 import logging
-from typing import List, Dict, Any, Callable, Optional
+import multiprocessing as mp
+import queue
+import tempfile
+import uuid
+from typing import List, Dict, Any, Optional
 from PySide6.QtCore import QThread, Signal
 
-# Попытка импорта опциональных тяжёлых зависимостей
-try:
-    import whisper
-    WHISPER_AVAILABLE = True
-except ImportError:
-    WHISPER_AVAILABLE = False
+AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac"}
+VIDEO_EXTENSIONS = {".mp4", ".avi", ".mkv", ".mov", ".webm"}
+MEDIA_EXTENSIONS = AUDIO_EXTENSIONS | VIDEO_EXTENSIONS
 
-try:
-    import ffmpeg
-    FFMPEG_AVAILABLE = True
-except ImportError:
-    FFMPEG_AVAILABLE = False
+
+def _resolve_model(model_name: str, model_path: str) -> str:
+    """Возвращает путь к локальному checkpoint OpenAI Whisper либо имя встроенной модели."""
+    if not model_path:
+        return model_name
+    path = os.path.abspath(os.path.expanduser(model_path))
+    if os.path.isfile(path):
+        if not path.lower().endswith(".pt"):
+            raise ValueError(
+                "Выбранный файл не является checkpoint-файлом OpenAI Whisper (.pt). "
+                "Форматы CTranslate2/whisper.cpp из Subtitle Edit напрямую несовместимы."
+            )
+        return path
+    if os.path.isdir(path):
+        candidates = glob.glob(os.path.join(path, "*.pt"))
+        if not candidates:
+            raise FileNotFoundError(
+                "В указанной папке не найден файл модели *.pt. "
+                "Укажите checkpoint OpenAI Whisper или выберите стандартную модель для загрузки."
+            )
+        if len(candidates) > 1:
+            names = ", ".join(os.path.basename(p) for p in candidates)
+            raise ValueError(f"В папке несколько моделей ({names}). Укажите конкретный файл .pt.")
+        return candidates[0]
+    raise FileNotFoundError(f"Путь к локальной модели не существует: {path}")
+
+
+def _transcribe_process(args, output_queue):
+    """Дочерний процесс: тяжёлый вызов Whisper можно остановить terminate()."""
+    media_path, language, model_name, device, model_path = args
+    try:
+        import whisper
+        resolved_model = _resolve_model(model_name, model_path)
+        output_queue.put(("progress", 8, "Загрузка локальной модели Whisper..."))
+        model = whisper.load_model(resolved_model, device="cuda" if "cuda" in device.lower() else "cpu")
+        output_queue.put(("progress", 20, "Подготовка аудио..."))
+        source = media_path
+        temp_audio = None
+        ext = os.path.splitext(media_path)[1].lower()
+        if ext in VIDEO_EXTENSIONS:
+            try:
+                import ffmpeg
+                temp_audio = os.path.join(tempfile.gettempdir(), f"transkriptor_{uuid.uuid4().hex}.wav")
+                (
+                    ffmpeg.input(media_path)
+                    .output(temp_audio, acodec="pcm_s16le", ac=1, ar="16k")
+                    .overwrite_output().run(quiet=True)
+                )
+                source = temp_audio
+            except Exception as exc:
+                raise RuntimeError(
+                    "Не удалось извлечь аудио из видео. Проверьте установку ffmpeg "
+                    f"и доступность видеодорожки: {exc}"
+                ) from exc
+        output_queue.put(("progress", 25, "Распознавание речи..."))
+        result = model.transcribe(
+            source,
+            language=None if language == "auto" else language,
+            verbose=False,
+            fp16=("cuda" in device.lower())
+        )
+        segments = [
+            {"start": float(s.get("start", 0)), "end": float(s.get("end", 0)),
+             "text": str(s.get("text", "")).strip()}
+            for s in result.get("segments", [])
+        ]
+        output_queue.put(("result", segments))
+        if temp_audio and os.path.exists(temp_audio):
+            os.remove(temp_audio)
+    except Exception as exc:
+        output_queue.put(("error", f"{type(exc).__name__}: {exc}"))
 
 
 class Transcriber:
-    """Обёртка над моделью OpenAI Whisper с поддержкой извлечения аудио и mock-режима."""
-
-    VIDEO_EXTENSIONS = {".mp4", ".avi", ".mkv"}
-    AUDIO_EXTENSIONS = {".mp3", ".wav"}
+    """Хранит расширения медиа и разрешает локальные модели Whisper."""
+    VIDEO_EXTENSIONS = VIDEO_EXTENSIONS
+    AUDIO_EXTENSIONS = AUDIO_EXTENSIONS
+    MEDIA_EXTENSIONS = MEDIA_EXTENSIONS
 
     def __init__(self):
-        self.model = None
-        self.current_model_name: Optional[str] = None
-        self.current_device: Optional[str] = None
-        self.use_mock_fallback: bool = not WHISPER_AVAILABLE
-
-    def load_model(self, model_name: str = "base", device: str = "cpu") -> None:
-        """Загружает модель Whisper на выбранное устройство (CPU или CUDA)."""
-        target_device = "cuda" if "cuda" in device.lower() else "cpu"
-
-        if not WHISPER_AVAILABLE:
-            logging.warning("Библиотека openai-whisper не найдена. Используется mock-заглушка.")
-            self.use_mock_fallback = True
-            self.current_model_name = model_name
-            self.current_device = target_device
-            return
-
-        try:
-            if self.model is None or self.current_model_name != model_name or self.current_device != target_device:
-                logging.info(f"Загрузка модели Whisper '{model_name}' на устройство '{target_device}'...")
-                self.model = whisper.load_model(model_name, device=target_device)
-                self.current_model_name = model_name
-                self.current_device = target_device
-                self.use_mock_fallback = False
-        except Exception as e:
-            logging.warning(f"Не удалось загрузить реальную модель Whisper ({e}). Переключение на mock-режим.")
-            self.use_mock_fallback = True
-
-    def extract_audio_from_video(self, media_path: str) -> str:
-        """Извлекает аудиодорожку из видеофайла во временный WAV-файл через ffmpeg-python."""
-        ext = os.path.splitext(media_path)[1].lower()
-        if ext not in self.VIDEO_EXTENSIONS:
-            return media_path
-
-        if not FFMPEG_AVAILABLE:
-            logging.warning("Библиотека ffmpeg-python не установлена. Возврат исходного пути файла.")
-            return media_path
-
-        try:
-            temp_wav = os.path.join(
-                tempfile.gettempdir(),
-                f"extracted_audio_{int(time.time())}.wav"
-            )
-            (
-                ffmpeg
-                .input(media_path)
-                .output(temp_wav, acodec="pcm_s16le", ac=1, ar="16k")
-                .overwrite_output()
-                .run(quiet=True)
-            )
-            logging.info(f"Аудиодорожка успешно извлечена в {temp_wav}")
-            return temp_wav
-        except Exception as e:
-            logging.warning(f"Не удалось извлечь аудио через ffmpeg ({e}). Используется исходный файл.")
-            return media_path
-
-    def transcribe(
-        self,
-        media_path: str,
-        language: str = "ru",
-        model_name: str = "base",
-        device: str = "cpu",
-        progress_callback: Optional[Callable[[int, str], None]] = None,
-        is_cancelled: Optional[Callable[[], bool]] = None
-    ) -> List[Dict[str, Any]]:
-        """
-        Выполняет транскрипцию файла и возвращает список сегментов:
-        [{'start': float, 'end': float, 'text': str}, ...]
-        """
-        if progress_callback:
-            progress_callback(10, "Подготовка медиафайла и проверка аудиодорожки...")
-
-        audio_path = self.extract_audio_from_video(media_path)
-
-        if is_cancelled and is_cancelled():
-            return []
-
-        if progress_callback:
-            progress_callback(25, f"Загрузка нейросетевой модели Whisper ({model_name})...")
-
-        self.load_model(model_name, device)
-
-        if is_cancelled and is_cancelled():
-            return []
-
-        # Если реальная модель доступна и загружена
-        if not self.use_mock_fallback and self.model is not None and os.path.exists(audio_path):
-            try:
-                if progress_callback:
-                    progress_callback(45, "Выполнение распознавания речи (Whisper)...")
-
-                lang_arg = None if language == "auto" else language
-                result = self.model.transcribe(audio_path, language=lang_arg, verbose=False)
-
-                segments = []
-                raw_segments = result.get("segments", [])
-                total = max(len(raw_segments), 1)
-
-                for idx, seg in enumerate(raw_segments):
-                    if is_cancelled and is_cancelled():
-                        return []
-                    segments.append({
-                        "start": float(seg.get("start", 0.0)),
-                        "end": float(seg.get("end", 0.0)),
-                        "text": str(seg.get("text", "")).strip()
-                    })
-                    if progress_callback:
-                        pct = 45 + int((idx + 1) / total * 45)
-                        progress_callback(pct, f"Обработка сегмента {idx + 1} из {total}...")
-
-                return segments
-            except Exception as e:
-                logging.warning(f"Сбой реальной транскрипции ({e}). Запуск демонстрационной заглушки.")
-
-        # Mock-заглушка для тестирования интерфейса без реальной модели
-        return self._mock_transcribe(media_path, language, progress_callback, is_cancelled)
-
-    def _mock_transcribe(
-        self,
-        media_path: str,
-        language: str,
-        progress_callback: Optional[Callable[[int, str], None]] = None,
-        is_cancelled: Optional[Callable[[], bool]] = None
-    ) -> List[Dict[str, Any]]:
-        """Имитирует процесс транскрипции для быстрого тестирования всех функций UI."""
-        filename = os.path.basename(media_path) if media_path else "demo_audio.mp3"
-
-        if language == "en":
-            mock_data = [
-                {"start": 0.0, "end": 4.2, "text": f"hello everyone welcome to the recording of {filename}"},
-                {"start": 5.0, "end": 10.5, "text": "uh today we are testing automatic speech recognition and speaker diarization"},
-                {"start": 12.5, "end": 18.0, "text": "well the second speaker joins the conversation after a short pause"},
-                {"start": 19.0, "end": 25.0, "text": "you can click on any timestamp code to seek the media player immediately"},
-                {"start": 27.5, "end": 33.0, "text": "finally we can export the transcript to srt txt or docx formats"}
-            ]
-        else:
-            mock_data = [
-                {"start": 0.0, "end": 4.5, "text": f"привет всем начинаем тестовую запись файла {filename}"},
-                {"start": 5.0, "end": 11.2, "text": "э-э сегодня мы проверяем работу десктопного приложения транскриптор на python"},
-                {"start": 14.0, "end": 20.5, "text": "ну типа здесь вступает второй собеседник после заметной паузы в диалоге"},
-                {"start": 21.0, "end": 27.8, "text": "при клике на любую строку с тайм-кодом плеер сразу перематывается на нужную секунду"},
-                {"start": 30.0, "end": 36.0, "text": "э-э а в конце мы можем сохранить проект в базу данных или экспортировать в docx и srt"}
-            ]
-
-        total = len(mock_data)
-        result_segments = []
-
-        for i, item in enumerate(mock_data):
-            if is_cancelled and is_cancelled():
-                logging.info("Транскрипция отменена пользователем.")
-                return []
-
-            time.sleep(0.35)  # Имитация вычислений нейросети
-            result_segments.append(item.copy())
-
-            if progress_callback:
-                pct = 35 + int((i + 1) / total * 55)
-                progress_callback(pct, f"Распознавание речи (сегмент {i + 1}/{total})...")
-
-        return result_segments
+        pass
 
 
 class TranscriptionWorker(QThread):
-    """Фоновый поток Qt для выполнения транскрипции без блокировки интерфейса."""
-
     progress_changed = Signal(int, str)
     transcription_finished = Signal(list)
     transcription_cancelled = Signal()
     transcription_error = Signal(str)
 
-    def __init__(
-        self,
-        transcriber: Transcriber,
-        media_path: str,
-        language: str,
-        model_name: str,
-        device: str
-    ):
+    def __init__(self, transcriber, media_path, language, model_name, device, model_path=""):
         super().__init__()
-        self.transcriber = transcriber
         self.media_path = media_path
         self.language = language
         self.model_name = model_name
         self.device = device
+        self.model_path = model_path
         self._cancelled = False
+        self._process = None
+        self._queue = None
 
-    def cancel(self) -> None:
-        """Устанавливает флаг отмены выполнения."""
+    def cancel(self):
         self._cancelled = True
+        # Процесс изолирован от GUI и модели: terminate прерывает даже зависший transcribe().
+        if self._process is not None and self._process.is_alive():
+            self._process.terminate()
 
-    def is_cancelled(self) -> bool:
-        return self._cancelled
-
-    def run(self) -> None:
+    def run(self):
+        if not self.media_path or not os.path.isfile(self.media_path):
+            self.transcription_error.emit("Медиафайл не выбран или не существует.")
+            return
+        if os.path.splitext(self.media_path)[1].lower() not in MEDIA_EXTENSIONS:
+            self.transcription_error.emit("Формат файла не поддерживается.")
+            return
+        ctx = mp.get_context("spawn")
+        self._queue = ctx.Queue()
+        self._process = ctx.Process(
+            target=_transcribe_process,
+            args=((self.media_path, self.language, self.model_name, self.device, self.model_path), self._queue)
+        )
         try:
-            segments = self.transcriber.transcribe(
-                media_path=self.media_path,
-                language=self.language,
-                model_name=self.model_name,
-                device=self.device,
-                progress_callback=lambda p, msg: self.progress_changed.emit(p, msg),
-                is_cancelled=self.is_cancelled
-            )
+            self._process.start()
+            while self._process.is_alive() or not self._queue.empty():
+                if self._cancelled:
+                    if self._process.is_alive():
+                        self._process.terminate()
+                    self._process.join(timeout=2)
+                    self.transcription_cancelled.emit()
+                    return
+                try:
+                    item = self._queue.get(timeout=0.15)
+                except queue.Empty:
+                    continue
+                if item[0] == "progress":
+                    self.progress_changed.emit(item[1], item[2])
+                elif item[0] == "result":
+                    self._result = item[1]
+                elif item[0] == "error":
+                    self._error = item[1]
+            self._process.join()
             if self._cancelled:
                 self.transcription_cancelled.emit()
+            elif hasattr(self, "_error"):
+                self.transcription_error.emit(self._error)
+            elif hasattr(self, "_result"):
+                self.progress_changed.emit(100, "Транскрипция завершена.")
+                self.transcription_finished.emit(self._result)
             else:
-                self.progress_changed.emit(100, "Транскрипция успешно завершена.")
-                self.transcription_finished.emit(segments)
-        except Exception as e:
-            logging.error(f"Ошибка в потоке транскрипции: {e}", exc_info=True)
-            self.transcription_error.emit(str(e))
+                self.transcription_error.emit("Процесс распознавания завершился без результата.")
+        except Exception as exc:
+            logging.exception("Ошибка процесса транскрипции")
+            self.transcription_error.emit(str(exc))
+        finally:
+            if self._queue is not None:
+                self._queue.close()
