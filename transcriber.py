@@ -7,6 +7,7 @@ import multiprocessing as mp
 import queue
 import tempfile
 import uuid
+import time
 from typing import List, Dict, Any, Optional
 from PySide6.QtCore import QThread, Signal
 
@@ -48,6 +49,7 @@ def _resolve_model(model_name: str, model_path: str) -> str:
 def _transcribe_process(args, output_queue):
     """Дочерний процесс: тяжёлый вызов Whisper можно остановить terminate()."""
     media_path, language, model_name, device, model_path = args
+    temp_audio = None
     try:
         resolved_model = _resolve_model(model_name, model_path)
         use_cuda = "cuda" in device.lower()
@@ -66,7 +68,6 @@ def _transcribe_process(args, output_queue):
             model = whisper.load_model(resolved_model, device="cuda" if use_cuda else "cpu")
         output_queue.put(("progress", 20, "Подготовка аудио..."))
         source = media_path
-        temp_audio = None
         ext = os.path.splitext(media_path)[1].lower()
         if ext in VIDEO_EXTENSIONS:
             try:
@@ -146,8 +147,24 @@ class TranscriptionWorker(QThread):
             self._process.terminate()
 
     def run(self):
-        if not self.media_path or not os.path.isfile(self.media_path):
-            self.transcription_error.emit("Медиафайл не выбран или не существует.")
+        if not self.media_path:
+            demo = [
+                {"start": 0.0, "end": 3.8, "text": "Демонстрационный режим распознавания речи."},
+                {"start": 4.2, "end": 8.5, "text": "Здесь показан пример результата с временными метками."},
+                {"start": 9.0, "end": 13.0, "text": "Для настоящей транскрипции загрузите аудио или видеофайл."}
+            ]
+            result = []
+            for index, segment in enumerate(demo):
+                if self._cancelled:
+                    self.transcription_cancelled.emit()
+                    return
+                time.sleep(0.25)
+                result.append(segment)
+                self.progress_changed.emit(35 + (index + 1) * 20, f"Демонстрация: сегмент {index + 1}/{len(demo)}")
+            self.transcription_finished.emit(result)
+            return
+        if not os.path.isfile(self.media_path):
+            self.transcription_error.emit("Медиафайл не существует.")
             return
         if os.path.splitext(self.media_path)[1].lower() not in MEDIA_EXTENSIONS:
             self.transcription_error.emit("Формат файла не поддерживается.")
