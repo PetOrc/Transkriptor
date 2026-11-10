@@ -15,11 +15,11 @@ class Exporter:
 
     LINE_PATTERN = re.compile(r"^\[(\d{6})\]\s*(?:\[([^\]]+)\]\s*)?(.*)$")
 
-    def export(self, text: str, output_path: str, fmt: str) -> None:
+    def export(self, text: str, output_path: str, fmt: str, media_duration: float = 0.0) -> None:
         """Универсальный метод вызова экспорта по выбранному формату."""
         fmt_upper = fmt.upper().strip()
         if fmt_upper == "SRT":
-            self.export_srt(text, output_path)
+            self.export_srt(text, output_path, media_duration)
         elif fmt_upper == "TXT":
             self.export_txt(text, output_path)
         elif fmt_upper == "DOCX":
@@ -33,7 +33,7 @@ class Exporter:
             f.write(text)
         logging.info(f"Экспорт в TXT выполнен: {output_path}")
 
-    def export_srt(self, text: str, output_path: str) -> None:
+    def export_srt(self, text: str, output_path: str, media_duration: float = 0.0) -> None:
         """Формирует валидный файл субтитров SRT на основе тайм-кодов из текста."""
         parsed = self._parse_lines(text)
         srt_blocks: List[str] = []
@@ -42,8 +42,13 @@ class Exporter:
             # Определяем время окончания по началу следующей реплики или +4 сек
             if idx + 1 < len(parsed) and parsed[idx + 1][0] > start_sec:
                 end_sec = parsed[idx + 1][0]
+            elif media_duration > start_sec:
+                end_sec = int(media_duration)
             else:
                 end_sec = start_sec + 4
+
+            if end_sec <= start_sec:
+                end_sec = start_sec + 1
 
             start_srt = self._seconds_to_srt_time(start_sec)
             end_srt = self._seconds_to_srt_time(end_sec)
