@@ -70,7 +70,7 @@ class DatabaseManager:
                     )
                 """)
 
-                # 6. Таблица истории экспортов
+                # 5. Таблица истории экспортов
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS exports (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
