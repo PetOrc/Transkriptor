@@ -238,7 +238,6 @@ class MainWindow(QMainWindow):
         self.current_media_duration: float = 0.0
         self.worker: Optional[TranscriptionWorker] = None
 
-        self.speakers: List[Dict[str, str]] = []
 
         self.app_settings: Dict[str, Any] = {
             "theme": "Тёмная",
@@ -829,7 +828,7 @@ class MainWindow(QMainWindow):
                 settings_info=settings_info,
                 transcription_text=self.text_editor.toPlainText(),
                 status="saved",
-                speakers_list=self.speakers
+                speakers_list=[]
             )
             self.lbl_status.setText(f"Статус: Проект #{self.current_project_id} сохранён в БД.")
             if not silent:
@@ -870,7 +869,6 @@ class MainWindow(QMainWindow):
 
                 if data["transcription"]:
                     self.text_editor.setPlainText(data["transcription"].get("full_text", ""))
-                    self._highlight_speakers_in_editor()
 
                 self.lbl_status.setText(f"Статус: Загружен проект «{data['project']['name']}»")
         except Exception as e:
