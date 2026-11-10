@@ -348,7 +348,7 @@ class MainWindow(QMainWindow):
 
         model_path_layout = QHBoxLayout()
         self.edit_model_path = QLineEdit(self.app_settings.get("model_path", ""))
-        self.edit_model_path.setPlaceholderText("Папка или файл локальной модели .pt (необязательно)")
+        self.edit_model_path.setPlaceholderText("Папка .pt / CTranslate2 или файл .pt (необязательно)")
         model_path_layout.addWidget(self.edit_model_path)
         self.btn_model_path = QPushButton("Обзор...")
         self.btn_model_path.clicked.connect(self.select_model_path)
