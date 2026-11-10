@@ -239,10 +239,7 @@ class MainWindow(QMainWindow):
         self.current_media_duration: float = 0.0
         self.worker: Optional[TranscriptionWorker] = None
 
-        self.speakers: List[Dict[str, str]] = [
-            {"name": "Спикер 1", "color": "#1E88E5"},
-            {"name": "Спикер 2", "color": "#43A047"}
-        ]
+        self.speakers: List[Dict[str, str]] = []
 
         self.app_settings: Dict[str, Any] = {
             "theme": "Тёмная",
@@ -726,7 +723,6 @@ class MainWindow(QMainWindow):
                 full_text = self.postprocessor.apply_smart_punctuation(full_text, self.combo_lang.currentText())
 
             self.text_editor.setPlainText(full_text)
-            self._highlight_speakers_in_editor()
             self.lbl_status.setText("Статус: Транскрипция и обработка успешно завершены.")
         except Exception as e:
             logging.error(f"Ошибка обработки результатов транскрипции: {e}", exc_info=True)
@@ -754,23 +750,6 @@ class MainWindow(QMainWindow):
     def clear_transcript_text(self) -> None:
         self.text_editor.clear()
         self.lbl_status.setText("Статус: Текст очищен.")
-
-    def _highlight_speakers_in_editor(self) -> None:
-        """Окрашивает метки [Спикер X] в редакторе в соответствии с назначенными цветами."""
-        doc = self.text_editor.document()
-        for sp in self.speakers:
-            color = QColor(sp["color"])
-            fmt = QTextCharFormat()
-            fmt.setForeground(color)
-            fmt.setFontWeight(700)
-
-            cursor = QTextCursor(doc)
-            pattern = f"[{sp['name']}]"
-            while True:
-                cursor = doc.find(pattern, cursor)
-                if cursor.isNull():
-                    break
-                cursor.mergeCharFormat(fmt)
 
     # -------------------- ДОПОЛНИТЕЛЬНЫЕ ОКНА И ПРОЕКТЫ БД --------------------
 
