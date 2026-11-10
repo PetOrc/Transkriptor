@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 from PySide6.QtCore import Qt, QUrl, QSettings
 from PySide6.QtGui import (
     QAction, QKeySequence, QTextCursor, QTextDocument,
-    QDesktopServices, QTextCharFormat, QColor, QShortcut
+    QDesktopServices, QShortcut
 )
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
