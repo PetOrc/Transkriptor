@@ -21,7 +21,6 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 
 from database import DatabaseManager
 from transcriber import Transcriber, TranscriptionWorker
-from diarization import Diarizer, DiarizationDialog
 from postprocessing import PostProcessor
 from exporter import Exporter
 from settings_dialog import SettingsDialog
@@ -230,7 +229,6 @@ class MainWindow(QMainWindow):
         # Инициализация сервисных модулей
         self.db = DatabaseManager()
         self.transcriber = Transcriber()
-        self.diarizer = Diarizer()
         self.postprocessor = PostProcessor()
         self.exporter = Exporter()
 
@@ -253,7 +251,7 @@ class MainWindow(QMainWindow):
             "model": "base",
             "language": "ru",
             "device": "CPU",
-            "pause_threshold": 2
+            "model_path": ""
         }
 
         self._init_player()
@@ -353,6 +351,15 @@ class MainWindow(QMainWindow):
         self.combo_model.setCurrentText("base")
         right_form.addRow("Модель Whisper:", self.combo_model)
 
+        model_path_layout = QHBoxLayout()
+        self.edit_model_path = QLineEdit(self.app_settings.get("model_path", ""))
+        self.edit_model_path.setPlaceholderText("Папка или файл локальной модели .pt (необязательно)")
+        model_path_layout.addWidget(self.edit_model_path)
+        self.btn_model_path = QPushButton("Обзор...")
+        self.btn_model_path.clicked.connect(self.select_model_path)
+        model_path_layout.addWidget(self.btn_model_path)
+        right_form.addRow("Локальная модель:", model_path_layout)
+
         self.combo_lang = QComboBox()
         self.combo_lang.addItems(["ru", "en", "auto"])
         self.combo_lang.setCurrentText("ru")
@@ -363,10 +370,6 @@ class MainWindow(QMainWindow):
         right_form.addRow("Устройство:", self.combo_device)
 
         right_layout.addLayout(right_form)
-
-        self.chk_diarization = QCheckBox("Диаризация спикеров")
-        self.chk_diarization.setChecked(True)
-        right_layout.addWidget(self.chk_diarization)
 
         self.chk_punctuation = QCheckBox("Умная пунктуация")
         self.chk_punctuation.setChecked(True)
@@ -431,10 +434,6 @@ class MainWindow(QMainWindow):
         self.btn_clear = QPushButton("Очистить текст")
         self.btn_clear.clicked.connect(self.clear_transcript_text)
         bottom_layout.addWidget(self.btn_clear)
-
-        self.btn_diarize = QPushButton("Диаризация")
-        self.btn_diarize.clicked.connect(self.open_diarization_dialog)
-        bottom_layout.addWidget(self.btn_diarize)
 
         self.btn_punctuate = QPushButton("Пунктуация")
         self.btn_punctuate.clicked.connect(self.run_manual_postprocessing)
@@ -513,10 +512,6 @@ class MainWindow(QMainWindow):
 
         # 5. Меню «Инструменты»
         menu_tools = menubar.addMenu("Инструменты")
-        act_diar = QAction("Диаризация спикеров...", self)
-        act_diar.triggered.connect(self.open_diarization_dialog)
-        menu_tools.addAction(act_diar)
-
         act_punct = QAction("Расставить пунктуацию и очистить паразиты", self)
         act_punct.triggered.connect(self.run_manual_postprocessing)
         menu_tools.addAction(act_punct)
@@ -560,10 +555,15 @@ class MainWindow(QMainWindow):
 
     # -------------------- РАБОТА С МЕДИАФАЙЛАМИ И ПЛЕЕРОМ --------------------
 
+    def select_model_path(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Выберите папку с моделью Whisper")
+        if path:
+            self.edit_model_path.setText(path)
+
     def open_media_file(self) -> None:
         """Открывает аудио или видео файл и загружает его в QMediaPlayer."""
         try:
-            file_filter = "Медиафайлы (*.mp3 *.wav *.mp4 *.avi *.mkv);;Все файлы (*.*)"
+            file_filter = "Медиафайлы (*.mp3 *.wav *.m4a *.flac *.ogg *.aac *.mp4 *.avi *.mkv *.mov *.webm);;Все файлы (*.*)"
             path, _ = QFileDialog.getOpenFileName(self, "Выберите аудио или видео файл", "", file_filter)
             if not path:
                 return
@@ -634,7 +634,8 @@ class MainWindow(QMainWindow):
         """Перематывает плеер при клике на строку с тайм-кодом [000123]."""
         match = re.search(r"\[(\d{6})\]", line_text)
         if match:
-            seconds = Diarizer.timestamp_to_seconds(match.group(0))
+            h, m, sec = int(match.group(1)[:2]), int(match.group(1)[2:4]), int(match.group(1)[4:6])
+            seconds = h * 3600 + m * 60 + sec
             self.media_player.setPosition(seconds * 1000)
             self.lbl_status.setText(f"Статус: Перемотка плеера на {seconds} сек ({match.group(0)})")
 
@@ -671,7 +672,8 @@ class MainWindow(QMainWindow):
                 media_path=self.current_media_path,
                 language=language,
                 model_name=model_name,
-                device=device
+                device=device,
+                model_path=self.edit_model_path.text().strip()
             )
             self.worker.progress_changed.connect(self._on_transcription_progress)
             self.worker.transcription_finished.connect(self._on_transcription_finished)
@@ -709,15 +711,11 @@ class MainWindow(QMainWindow):
             self.btn_start_transcribe.setEnabled(True)
             self.btn_cancel_transcribe.setEnabled(False)
 
-            if self.chk_diarization.isChecked():
-                self.diarizer.pause_threshold = float(self.app_settings.get("pause_threshold", 2))
-                segments = self.diarizer.diarize_segments(segments, max_speakers=max(len(self.speakers), 2))
-
             lines: List[str] = []
             for seg in segments:
-                ts_code = Diarizer.seconds_to_timestamp(float(seg.get("start", 0.0)))
-                speaker_tag = f"[{seg['speaker']}] " if seg.get("speaker") else ""
-                lines.append(f"{ts_code} {speaker_tag}{seg.get('text', '').strip()}")
+                seconds = max(0, int(float(seg.get("start", 0.0))))
+                ts_code = f"[{seconds // 3600:02d}{(seconds % 3600) // 60:02d}{seconds % 60:02d}]"
+                lines.append(f"{ts_code} {seg.get('text', '').strip()}")
 
             full_text = "\n".join(lines)
 
@@ -726,9 +724,6 @@ class MainWindow(QMainWindow):
 
             if self.chk_punctuation.isChecked():
                 full_text = self.postprocessor.apply_smart_punctuation(full_text, self.combo_lang.currentText())
-
-            if self.chk_diarization.isChecked():
-                full_text = self.postprocessor.format_paragraphs_by_speaker(full_text)
 
             self.text_editor.setPlainText(full_text)
             self._highlight_speakers_in_editor()
@@ -748,7 +743,6 @@ class MainWindow(QMainWindow):
             if self.chk_filler_filter.isChecked():
                 text = self.postprocessor.remove_filler_words(text)
             text = self.postprocessor.apply_smart_punctuation(text, self.combo_lang.currentText())
-            text = self.postprocessor.format_paragraphs_by_speaker(text)
 
             self.text_editor.setPlainText(text)
             self._highlight_speakers_in_editor()
@@ -779,34 +773,6 @@ class MainWindow(QMainWindow):
                 cursor.mergeCharFormat(fmt)
 
     # -------------------- ДОПОЛНИТЕЛЬНЫЕ ОКНА И ПРОЕКТЫ БД --------------------
-
-    def open_diarization_dialog(self) -> None:
-        """Открывает окно управления спикерами и применяет изменения к тексту."""
-        try:
-            current_text = self.text_editor.toPlainText()
-            if current_text.strip() and not re.search(r"\[[^\d\]]+\]", current_text):
-                current_text = self.diarizer.apply_diarization_to_text(current_text, self.speakers)
-                self.text_editor.setPlainText(current_text)
-
-            dlg = DiarizationDialog(self.speakers, self)
-            if dlg.exec() == QDialog.Accepted:
-                updated = dlg.get_updated_speakers()
-                text = self.text_editor.toPlainText()
-
-                for item in updated:
-                    old_n = item.get("old_name")
-                    new_n = item.get("name")
-                    if old_n and new_n and old_n != new_n:
-                        text = text.replace(f"[{old_n}]", f"[{new_n}]")
-
-                self.speakers = [{"name": s["name"], "color": s["color"]} for s in updated]
-                text = self.postprocessor.format_paragraphs_by_speaker(text)
-                self.text_editor.setPlainText(text)
-                self._highlight_speakers_in_editor()
-                self.lbl_status.setText("Статус: Настройки спикеров обновлены.")
-        except Exception as e:
-            logging.error(f"Ошибка диаризации: {e}", exc_info=True)
-            QMessageBox.critical(self, "Ошибка", f"Ошибка при настройке диаризации:\n{e}")
 
     def open_find_replace_dialog(self) -> None:
         dlg = FindReplaceDialog(self.text_editor, self)
@@ -871,7 +837,6 @@ class MainWindow(QMainWindow):
             settings_info = {
                 "language": self.combo_lang.currentText(),
                 "model": self.combo_model.currentText(),
-                "diarization": self.chk_diarization.isChecked(),
                 "punctuation": self.chk_punctuation.isChecked()
             }
 
@@ -919,7 +884,6 @@ class MainWindow(QMainWindow):
                     st = data["settings"]
                     self.combo_lang.setCurrentText(st.get("language", "ru"))
                     self.combo_model.setCurrentText(st.get("model", "base"))
-                    self.chk_diarization.setChecked(bool(st.get("diarization", 1)))
                     self.chk_punctuation.setChecked(bool(st.get("punctuation", 1)))
 
                 if data["speakers"]:
