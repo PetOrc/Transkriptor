@@ -3,7 +3,7 @@ from typing import Dict, Any
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
     QFormLayout, QComboBox, QCheckBox, QPushButton, QTableWidget,
-    QTableWidgetItem, QHeaderView, QSpinBox
+    QTableWidgetItem, QHeaderView
 )
 
 
@@ -77,12 +77,6 @@ class SettingsDialog(QDialog):
         self.combo_device.setCurrentText(self.settings.get("device", "CPU"))
         layout.addRow("Устройство вычислений:", self.combo_device)
 
-        self.spin_pause = QSpinBox()
-        self.spin_pause.setRange(1, 15)
-        self.spin_pause.setValue(int(self.settings.get("pause_threshold", 2)))
-        self.spin_pause.setSuffix(" сек")
-        layout.addRow("Порог паузы для смены спикера:", self.spin_pause)
-
         return widget
 
     def _create_hotkeys_tab(self) -> QWidget:
@@ -119,5 +113,4 @@ class SettingsDialog(QDialog):
             "model": self.combo_model.currentText(),
             "language": self.combo_lang.currentText(),
             "device": self.combo_device.currentText(),
-            "pause_threshold": self.spin_pause.value(),
         }
