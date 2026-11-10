@@ -2,7 +2,6 @@
 import re
 import logging
 from typing import List, Tuple
-from diarization import Diarizer
 
 try:
     from docx import Document
@@ -90,7 +89,7 @@ class Exporter:
             match = self.LINE_PATTERN.match(stripped)
             if match:
                 ts_raw, speaker, content = match.groups()
-                sec = Diarizer.timestamp_to_seconds(f"[{ts_raw}]")
+                sec = int(ts_raw[:2]) * 3600 + int(ts_raw[2:4]) * 60 + int(ts_raw[4:6])
                 results.append((sec, speaker or "", content.strip()))
                 fallback_sec = sec + 4
             else:
