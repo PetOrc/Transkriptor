@@ -177,7 +177,7 @@ class TranscriptionWorker(QThread):
         )
         try:
             self._process.start()
-            while self._process.is_alive() or not self._queue.empty():
+            while True:
                 if self._cancelled:
                     if self._process.is_alive():
                         self._process.terminate()
@@ -187,6 +187,8 @@ class TranscriptionWorker(QThread):
                 try:
                     item = self._queue.get(timeout=0.15)
                 except queue.Empty:
+                    if not self._process.is_alive():
+                        break
                     continue
                 if item[0] == "progress":
                     self.progress_changed.emit(item[1], item[2])
