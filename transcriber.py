@@ -28,11 +28,15 @@ def _resolve_model(model_name: str, model_path: str) -> str:
             )
         return path
     if os.path.isdir(path):
+        # faster-whisper / CTranslate2 хранит модель как каталог с config.json.
+        if os.path.isfile(os.path.join(path, "config.json")):
+            return path
         candidates = glob.glob(os.path.join(path, "*.pt"))
         if not candidates:
             raise FileNotFoundError(
-                "В указанной папке не найден файл модели *.pt. "
-                "Укажите checkpoint OpenAI Whisper или выберите стандартную модель для загрузки."
+                "В папке не найдена модель OpenAI Whisper (.pt) или faster-whisper "
+                "(каталог с config.json). Модели whisper.cpp (.bin/.ggml/.gguf) "
+                "напрямую не поддерживаются."
             )
         if len(candidates) > 1:
             names = ", ".join(os.path.basename(p) for p in candidates)
