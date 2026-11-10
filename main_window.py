@@ -818,7 +818,9 @@ class MainWindow(QMainWindow):
             settings_info = {
                 "language": self.combo_lang.currentText(),
                 "model": self.combo_model.currentText(),
-                "punctuation": self.chk_punctuation.isChecked()
+                "device": self.combo_device.currentText(),
+                "punctuation": self.chk_punctuation.isChecked(),
+                "filler_filter": self.chk_filler_filter.isChecked()
             }
 
             self.current_project_id = self.db.save_full_project(
@@ -864,7 +866,9 @@ class MainWindow(QMainWindow):
                     st = data["settings"]
                     self.combo_lang.setCurrentText(st.get("language", "ru"))
                     self.combo_model.setCurrentText(st.get("model", "base"))
+                    self.combo_device.setCurrentText(st.get("device", "CPU"))
                     self.chk_punctuation.setChecked(bool(st.get("punctuation", 1)))
+                    self.chk_filler_filter.setChecked(bool(st.get("filler_filter", 1)))
 
                 if data["transcription"]:
                     self.text_editor.setPlainText(data["transcription"].get("full_text", ""))
