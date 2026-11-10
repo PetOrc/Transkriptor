@@ -53,7 +53,6 @@ class DatabaseManager:
                         project_id INTEGER NOT NULL,
                         language TEXT DEFAULT 'ru',
                         model TEXT DEFAULT 'base',
-                        diarization INTEGER DEFAULT 0,
                         punctuation INTEGER DEFAULT 1,
                         FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
                     )
@@ -68,17 +67,6 @@ class DatabaseManager:
                         full_text TEXT DEFAULT '',
                         status TEXT DEFAULT 'created',
                         FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
-                    )
-                """)
-
-                # 5. Таблица спикеров
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS speakers (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        transcription_id INTEGER NOT NULL,
-                        name TEXT NOT NULL,
-                        color TEXT NOT NULL,
-                        FOREIGN KEY (transcription_id) REFERENCES transcriptions(id) ON DELETE CASCADE
                     )
                 """)
 
@@ -107,8 +95,7 @@ class DatabaseManager:
         media_info: Dict[str, Any],
         settings_info: Dict[str, Any],
         transcription_text: str,
-        status: str,
-        speakers_list: List[Dict[str, str]]
+        status: str
     ) -> int:
         """Создаёт новый или обновляет существующий проект со всеми связанными данными."""
         try:
@@ -145,13 +132,12 @@ class DatabaseManager:
                 # Сохранение настроек
                 cursor.execute("DELETE FROM settings WHERE project_id = ?", (project_id,))
                 cursor.execute(
-                    """INSERT INTO settings (project_id, language, model, diarization, punctuation)
-                       VALUES (?, ?, ?, ?, ?)""",
+                    """INSERT INTO settings (project_id, language, model, punctuation)
+                       VALUES (?, ?, ?, ?)""",
                     (
                         project_id,
                         settings_info.get("language", "ru"),
                         settings_info.get("model", "base"),
-                        int(bool(settings_info.get("diarization", False))),
                         int(bool(settings_info.get("punctuation", True)))
                     )
                 )
@@ -170,14 +156,6 @@ class DatabaseManager:
                     (project_id, next_version, transcription_text, status)
                 )
                 transcription_id = cursor.lastrowid
-
-                # Сохранение спикеров для текущей транскрипции
-                for sp in speakers_list:
-                    cursor.execute(
-                        """INSERT INTO speakers (transcription_id, name, color)
-                           VALUES (?, ?, ?)""",
-                        (transcription_id, sp["name"], sp["color"])
-                    )
 
                 conn.commit()
                 logging.info(f"Проект '{name}' (ID={project_id}) успешно сохранён.")
@@ -236,20 +214,12 @@ class DatabaseManager:
                 )
                 transcription = cursor.fetchone()
 
-                speakers = []
-                if transcription:
-                    cursor.execute(
-                        "SELECT name, color FROM speakers WHERE transcription_id = ?",
-                        (transcription["id"],)
-                    )
-                    speakers = [dict(r) for r in cursor.fetchall()]
-
                 return {
                     "project": dict(project),
                     "media": dict(media) if media else None,
                     "settings": dict(settings) if settings else None,
                     "transcription": dict(transcription) if transcription else None,
-                    "speakers": speakers
+                    "speakers": []  # поле сохранено для совместимости со старой версией UI
                 }
         except Exception as e:
             logging.error(f"Ошибка загрузки проекта ID={project_id}: {e}", exc_info=True)
