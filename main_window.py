@@ -827,8 +827,7 @@ class MainWindow(QMainWindow):
                 media_info=media_info,
                 settings_info=settings_info,
                 transcription_text=self.text_editor.toPlainText(),
-                status="saved",
-                speakers_list=[]
+                status="saved"
             )
             self.lbl_status.setText(f"Статус: Проект #{self.current_project_id} сохранён в БД.")
             if not silent:
