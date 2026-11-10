@@ -4,7 +4,7 @@ import re
 import logging
 from typing import List, Dict, Any, Optional
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, QSettings
 from PySide6.QtGui import (
     QAction, QKeySequence, QTextCursor, QTextDocument,
     QDesktopServices, QTextCharFormat, QColor, QShortcut
@@ -158,8 +158,7 @@ class HelpDialog(QDialog):
             <p><b>3. Синхронизация с тайм-кодами:</b> Каждая реплика имеет формат <code>[000123] Текст</code>
             (где 000123 — время ЧЧММСС). Кликните левой кнопкой мыши на любую строку с тайм-кодом,
             чтобы перемотать встроенный плеер на этот момент.</p>
-            <p><b>4. Диаризация и постобработка:</b> Используйте кнопки нижней панели для автоматического
-            разделения по спикерам, расстановки знаков препинания и удаления слов-паразитов.</p>
+            <p><b>4. Постобработка:</b> Используйте инструменты для расстановки знаков препинания и удаления слов-паразитов.</p>
             <p><b>5. Горячие клавиши:</b></p>
             <ul>
                 <li><b>Space</b> — Воспроизведение / Пауза плеера</li>
@@ -248,7 +247,7 @@ class MainWindow(QMainWindow):
             "model": "base",
             "language": "ru",
             "device": "CPU",
-            "model_path": ""
+            "model_path": QSettings("PetOrc", "Transkriptor").value("model_path", "", type=str)
         }
 
         self._init_player()
@@ -317,7 +316,7 @@ class MainWindow(QMainWindow):
         self.text_editor = SyncTextEdit(self._on_transcript_line_clicked)
         self.text_editor.setPlaceholderText(
             "Здесь появится расшифрованный текст с тайм-кодами в формате:\n"
-            "[000005] [Спикер 1] Привет всем, начинаем запись..."
+            "[000005] Привет всем, начинаем запись..."
         )
         center_layout.addWidget(self.text_editor, stretch=1)
 
@@ -556,6 +555,8 @@ class MainWindow(QMainWindow):
         path = QFileDialog.getExistingDirectory(self, "Выберите папку с моделью Whisper")
         if path:
             self.edit_model_path.setText(path)
+            self.app_settings["model_path"] = path
+            QSettings("PetOrc", "Transkriptor").setValue("model_path", path)
 
     def open_media_file(self) -> None:
         """Открывает аудио или видео файл и загружает его в QMediaPlayer."""
