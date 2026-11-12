@@ -8,6 +8,7 @@ simplemma>=1.1.0
 # Дополнительно требуется установленный исполняемый файл FFmpeg
 # (ffmpeg.exe должен быть доступен через PATH).
 #
+# faster-whisper нужен для локальных моделей Subtitle Edit в формате CTranslate2.
 # Для CUDA установите подходящую сборку PyTorch отдельно по инструкции:
 # https://pytorch.org/get-started/locally/
 #
