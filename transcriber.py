@@ -8,6 +8,7 @@ import queue
 import tempfile
 import uuid
 import time
+import sys
 from typing import List, Dict, Any, Optional
 from PySide6.QtCore import QThread, Signal
 
@@ -29,26 +30,50 @@ def _resolve_model(model_name: str, model_path: str) -> str:
             )
         return path
     if os.path.isdir(path):
-        # Можно указать как саму модель, так и общую папку с tiny.pt/base.pt/... .
+        # Поддерживаем как папку конкретной модели, так и общую папку с подкаталогами моделей.
         if os.path.isfile(os.path.join(path, "config.json")):
             return path
         nested_ct2 = os.path.join(path, model_name)
         if os.path.isfile(os.path.join(nested_ct2, "config.json")):
             return nested_ct2
-        candidates = glob.glob(os.path.join(path, "*.pt"))
-        matching = [p for p in candidates if os.path.splitext(os.path.basename(p))[0].lower() == model_name.lower()]
-        if matching:
-            return matching[0]
-        if len(candidates) == 1:
-            return candidates[0]
-        if not candidates:
-            raise FileNotFoundError(
-                "В папке не найдена модель OpenAI Whisper (.pt) или faster-whisper "
-                "(каталог с config.json). Модели whisper.cpp (.bin/.ggml/.gguf) "
-                "напрямую не поддерживаются."
+
+        ct2_matches = []
+        pt_matches = []
+        ggml_matches = []
+        for root, dirs, files in os.walk(path):
+            dirs[:] = [d for d in dirs if d not in {".git", "__pycache__"}]
+            if "config.json" in files:
+                if os.path.basename(root).lower() == model_name.lower():
+                    ct2_matches.insert(0, root)
+                else:
+                    ct2_matches.append(root)
+                dirs[:] = []
+                continue
+            for filename in files:
+                full_path = os.path.join(root, filename)
+                if filename.lower().endswith(".pt"):
+                    if os.path.splitext(filename)[0].lower() == model_name.lower():
+                        pt_matches.insert(0, full_path)
+                    else:
+                        pt_matches.append(full_path)
+                elif filename.lower().endswith((".bin", ".ggml", ".gguf")):
+                    ggml_matches.append(full_path)
+
+        if ct2_matches:
+            return ct2_matches[0]
+        if pt_matches:
+            return pt_matches[0]
+        if ggml_matches:
+            sample = ", ".join(os.path.basename(p) for p in ggml_matches[:4])
+            raise ValueError(
+                "Найдены модели whisper.cpp (GGML/GGUF), например: " + sample +
+                ". Этот формат пока не поддерживается. Нужен .pt или каталог CTranslate2 с config.json."
             )
-        names = ", ".join(os.path.basename(p) for p in candidates)
-        raise ValueError(f"В папке несколько моделей ({names}); файл для модели '{model_name}' не найден.")
+        raise FileNotFoundError(
+            "В выбранной папке не найдена модель " + model_name +
+            " (файл .pt или каталог с config.json). Очисти поле «Локальная модель», "
+            "если хочешь скачать стандартную модель Whisper автоматически."
+        )
     raise FileNotFoundError(f"Путь к локальной модели не существует: {path}")
 
 
@@ -64,14 +89,35 @@ def _transcribe_process(args, output_queue):
         model = None
         if os.path.isdir(resolved_model) and os.path.isfile(os.path.join(resolved_model, "config.json")):
             # Локальный формат CTranslate2 (faster-whisper).
-            from faster_whisper import WhisperModel
+            try:
+                from faster_whisper import WhisperModel
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Для этой модели не установлен faster-whisper. Установи его в том же Python, "
+                    "которым запускается программа:\n"
+                    f'"{sys.executable}" -m pip install faster-whisper'
+                ) from exc
             faster_model = WhisperModel(
                 resolved_model, device="cuda" if use_cuda else "cpu",
                 compute_type="float16" if use_cuda else "int8"
             )
         else:
-            import whisper
-            model = whisper.load_model(resolved_model, device="cuda" if use_cuda else "cpu")
+            try:
+                import whisper
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Не установлен openai-whisper. Выполни в терминале VS Code:\n"
+                    f'"{sys.executable}" -m pip install -r requirements.txt'
+                ) from exc
+            try:
+                model = whisper.load_model(resolved_model, device="cuda" if use_cuda else "cpu")
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Не удалось загрузить модель '{resolved_model}'. Для стандартной модели "
+                    "проверь интернет-соединение и права доступа к папке кэша. "
+                    "Чтобы начать загрузку заново, очисти поле «Локальная модель». "
+                    f"Подробности: {exc}"
+                ) from exc
         output_queue.put(("progress", 20, "Подготовка аудио..."))
         source = media_path
         ext = os.path.splitext(media_path)[1].lower()
