@@ -370,11 +370,11 @@ class MainWindow(QMainWindow):
 
         right_layout.addLayout(right_form)
 
-        self.chk_punctuation = QCheckBox("Умная пунктуация")
+        self.chk_punctuation = QCheckBox("Базовая пунктуация (правила)")
         self.chk_punctuation.setChecked(True)
         right_layout.addWidget(self.chk_punctuation)
 
-        self.chk_filler_filter = QCheckBox("Фильтр слов-паразитов")
+        self.chk_filler_filter = QCheckBox("Фильтр слов-паразитов (словарь)")
         self.chk_filler_filter.setChecked(True)
         right_layout.addWidget(self.chk_filler_filter)
 
@@ -751,7 +751,8 @@ class MainWindow(QMainWindow):
 
             if self.chk_filler_filter.isChecked():
                 text = self.postprocessor.remove_filler_words(text)
-            text = self.postprocessor.apply_smart_punctuation(text, self.combo_lang.currentText())
+            if self.chk_punctuation.isChecked():
+                text = self.postprocessor.apply_smart_punctuation(text, self.combo_lang.currentText())
 
             self.text_editor.setPlainText(text)
             self.lbl_status.setText("Статус: Постобработка текста выполнена.")
