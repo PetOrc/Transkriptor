@@ -353,6 +353,9 @@ class MainWindow(QMainWindow):
         self.btn_model_path = QPushButton("Обзор...")
         self.btn_model_path.clicked.connect(self.select_model_path)
         model_path_layout.addWidget(self.btn_model_path)
+        self.btn_model_file = QPushButton("Файл .pt...")
+        self.btn_model_file.clicked.connect(self.select_model_file)
+        model_path_layout.addWidget(self.btn_model_file)
         self.btn_clear_model_path = QPushButton("Сбросить")
         self.btn_clear_model_path.setToolTip("Очистить путь и разрешить автоматическую загрузку стандартной модели Whisper")
         self.btn_clear_model_path.clicked.connect(self.clear_model_path)
@@ -556,6 +559,13 @@ class MainWindow(QMainWindow):
 
     def select_model_path(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Выберите папку с моделью Whisper")
+        if path:
+            self.edit_model_path.setText(path)
+            self.app_settings["model_path"] = path
+            QSettings("PetOrc", "Transkriptor").setValue("model_path", path)
+
+    def select_model_file(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Выберите checkpoint OpenAI Whisper", "", "Whisper checkpoint (*.pt)")
         if path:
             self.edit_model_path.setText(path)
             self.app_settings["model_path"] = path
