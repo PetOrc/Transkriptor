@@ -353,6 +353,10 @@ class MainWindow(QMainWindow):
         self.btn_model_path = QPushButton("Обзор...")
         self.btn_model_path.clicked.connect(self.select_model_path)
         model_path_layout.addWidget(self.btn_model_path)
+        self.btn_clear_model_path = QPushButton("Сбросить")
+        self.btn_clear_model_path.setToolTip("Очистить путь и разрешить автоматическую загрузку стандартной модели Whisper")
+        self.btn_clear_model_path.clicked.connect(self.clear_model_path)
+        model_path_layout.addWidget(self.btn_clear_model_path)
         right_form.addRow("Локальная модель:", model_path_layout)
 
         self.combo_lang = QComboBox()
@@ -556,6 +560,12 @@ class MainWindow(QMainWindow):
             self.edit_model_path.setText(path)
             self.app_settings["model_path"] = path
             QSettings("PetOrc", "Transkriptor").setValue("model_path", path)
+
+    def clear_model_path(self) -> None:
+        """Сбрасывает локальный путь, чтобы Whisper мог скачать стандартную модель."""
+        self.edit_model_path.clear()
+        self.app_settings["model_path"] = ""
+        QSettings("PetOrc", "Transkriptor").setValue("model_path", "")
 
     def open_media_file(self) -> None:
         """Открывает аудио или видео файл и загружает его в QMediaPlayer."""
